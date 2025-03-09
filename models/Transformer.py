@@ -193,25 +193,38 @@ class PositionWiseFeedForward:
         return d_x
 
 class Encoder:
-    def __init__(self, d_model, d_ff):
-        self.Q = np.random.randn(d_model, d_model) * 0.01
-        self.K = np.random.randn(d_model, d_model) * 0.01
-        self.V = np.random.randn(d_model, d_model) * 0.01
-
-        self.FeedForwardNetwork = PositionWiseFeedForward(d_model, d_ff)
-
+    def __init__(self, heads, d_model, d_ff):
+        self.attention = MultiHeadAttention(heads, d_model)
         self.norm1 = LayerNorm(d_model)
+        self.ffn = PositionWiseFeedForward(d_model, d_ff)
         self.norm2 = LayerNorm(d_model)
 
+        self.cache = {}
+
+    def forward(self, x):
+        attention_output = self.attention.forward(x, x, x)
+        self.cache['attention_output'] = attention_output
+
+        x = x + attention_output # residual connection
+        self.cache['post_attention_x'] = x
+
+        norm_x = self.norm1.forward(x)
+        self.cache['norm_x1'] = norm_x
+
+        ff_output = self.ffn.forward(norm_x)
+        self.cache['ff_output'] = ff_output
+
+        x = x + ff_output # residual connection
+
+        norm_x = self.norm2.forward(x)
+        self.cache['norm_x2'] = norm_x
+
+        return x
 
 class Decoder:
-    def __init__(self, d_model, d_ff):
-        self.Q = np.random.randn(d_model, d_model) * 0.01
-        self.K = np.random.randn(d_model, d_model) * 0.01
-        self.V = np.random.randn(d_model, d_model) * 0.01
-
-        self.FeedForwardNetwork = PositionWiseFeedForward(d_model, d_ff)
-
+    def __init__(self, heads, d_model, d_ff):
+        self.attention = MultiHeadAttention(heads, d_model)
+        self.ffn = PositionWiseFeedForward(d_model, d_ff)
         self.norm1 = LayerNorm(d_model)
         self.norm2 = LayerNorm(d_model)
         self.norm3 = LayerNorm(d_model)
