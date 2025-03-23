@@ -1,5 +1,3 @@
-import math
-
 import numpy as np
 from pyexpat import features
 
@@ -51,8 +49,6 @@ class MultiHeadAttention:
         return output, attn_weights
 
     def forward(self, Q, K, V, mask=None):
-        batch_size = Q.shape[0]
-
         self.cache['Q'] = Q
         self.cache['K'] = K
         self.cache['V'] = V
@@ -118,6 +114,13 @@ class MultiHeadAttention:
 
         return d_query, d_key, d_value
 
+    def update_parmas(self, lr):
+        self.W_q -= lr * self.dW_q
+        self.W_k -= lr * self.dW_k
+        self.W_v -= lr * self.dW_v
+        self.W_o -= lr * self.dW_o
+
+
 class LayerNorm:
     def __init__(self, d_model, eps=1e-6):
         self.eps = eps
@@ -145,6 +148,11 @@ class LayerNorm:
 
         d_x = d_normalized / np.sqrt(self.var + self.eps) + d_var * 2 * (self.x - self.mean) / features + d_mean / features
         return d_x
+
+    def update_parmas(self, lr):
+        self.gamma -= lr * self.d_gamma
+        self.beta -= lr * self.d_beta
+
 
 class PositionWiseFeedForward:
     def __init__(self, d_model, d_ff):
@@ -192,7 +200,14 @@ class PositionWiseFeedForward:
 
         return d_x
 
-class Encoder:
+    def update_parmas(self, lr):
+        self.W1 -= lr * self.d_w1
+        self.b1 -= lr * self.d_b1
+        self.W2 -= lr * self.d_w2
+        self.b2 -= lr * self.d_b2
+
+
+class EncoderLayer:
     def __init__(self, heads, d_model, d_ff):
         self.attention = MultiHeadAttention(heads, d_model)
         self.norm1 = LayerNorm(d_model)
@@ -205,7 +220,7 @@ class Encoder:
         attention_output = self.attention.forward(x, x, x)
         self.cache['attention_output'] = attention_output
 
-        x = x + attention_output # residual connection
+        x = x + attention_output # Residual Connection
         self.cache['post_attention_x'] = x
 
         norm_x = self.norm1.forward(x)
@@ -214,14 +229,30 @@ class Encoder:
         ff_output = self.ffn.forward(norm_x)
         self.cache['ff_output'] = ff_output
 
-        x = x + ff_output # residual connection
+        x = x + ff_output # Residual Connection
 
         norm_x = self.norm2.forward(x)
         self.cache['norm_x2'] = norm_x
 
         return x
 
-class Decoder:
+    def backward(self, d_out):
+        d_norm_x2 = self.norm2.backward(d_out)
+
+        d_ff_output = self.ffn.backward(d_norm_x2)
+
+        d_norm_x1 = d_norm_x2 + d_ff_output
+
+        d_x_and_attn = self.norm1.backward(d_norm_x1)
+
+        d_attn_output = d_x_and_attn
+
+        d_x_from_attn, _, _ = self.attention.backward(d_attn_output)
+        d_x = d_attn_output, d_x_from_attn
+
+        return d_x
+
+class DecoderLayer:
     def __init__(self, heads, d_model, d_ff):
         self.attention = MultiHeadAttention(heads, d_model)
         self.ffn = PositionWiseFeedForward(d_model, d_ff)
@@ -230,19 +261,17 @@ class Decoder:
         self.norm3 = LayerNorm(d_model)
 
 
-class Transformer:
-    def __init__(self, src_vocab_size, tgt_vocab_size, d_model=512, num_heads=8, d_ff=2048, num_layers=6, max_seq_length=5000):
+class Encoder:
+    def __init__(self, src_vocab_size, d_model=512, num_heads=8, d_ff=2048, num_layers=6, max_seq_length=5000):
         self.src_vocab_size = src_vocab_size
-        self.tgt_vocab_size = tgt_vocab_size
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_ff = d_ff
         self.num_layers = num_layers
         self.input_embeddings = np.random.randn(src_vocab_size, d_model)
-        self.output_embeddings = np.random.randn(tgt_vocab_size, d_model)
-        self.encoders = [Encoder(self.d_model, self.d_ff) for _ in range(num_layers)]
-        self.decoders = [Decoder(self.d_model, self.d_ff) for _ in range(num_layers)]
+        self.encoder_layers = [EncoderLayer(self.d_model, self.d_ff) for _ in range(num_layers)]
         self.pe = self.init_positional_encoding(max_seq_length)
+        self.d_input_embeddings = np.zeros_like(self.input_embeddings)
 
     def init_positional_encoding(self, max_seq_length):
         position = np.arange(max_seq_length)[:, np.newaxis]
@@ -252,8 +281,18 @@ class Transformer:
         pe[:, 1::2] = np.cos(position * div_term)
         return pe
 
-    def encode(self, x):
+    def forward(self, x):
         X_emb = self.embeddings[x]+self.pe[x]
-        for layer in self.encoders:
-            X_emb = layer
+        for layer in range(self.num_layers):
+            X_emb = self.encoder_layers[layer].forward(X_emb)
         return X_emb
+
+    def backward(self, d_output):
+        d_x = d_output
+
+        for layer in reversed(range(self.num_layers)):
+            d_x = self.encoder_layers[layer].backward(d_x)
+
+        dx_scaled = d_x/np.sqrt(self.d_model)
+
+        self.d_input_embeddings = np.matmul()
