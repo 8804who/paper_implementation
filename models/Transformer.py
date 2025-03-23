@@ -114,7 +114,7 @@ class MultiHeadAttention:
 
         return d_query, d_key, d_value
 
-    def update_parmas(self, lr):
+    def update_params(self, lr):
         self.W_q -= lr * self.dW_q
         self.W_k -= lr * self.dW_k
         self.W_v -= lr * self.dW_v
@@ -149,7 +149,7 @@ class LayerNorm:
         d_x = d_normalized / np.sqrt(self.var + self.eps) + d_var * 2 * (self.x - self.mean) / features + d_mean / features
         return d_x
 
-    def update_parmas(self, lr):
+    def update_params(self, lr):
         self.gamma -= lr * self.d_gamma
         self.beta -= lr * self.d_beta
 
@@ -200,10 +200,10 @@ class PositionWiseFeedForward:
 
         return d_x
 
-    def update_parmas(self, lr):
-        self.W1 -= lr * self.d_w1
+    def update_params(self, lr):
+        self.W1 -= lr * self.d_W1
         self.b1 -= lr * self.d_b1
-        self.W2 -= lr * self.d_w2
+        self.W2 -= lr * self.d_W2
         self.b2 -= lr * self.d_b2
 
 
@@ -252,6 +252,13 @@ class EncoderLayer:
 
         return d_x
 
+    def update_params(self, lr):
+        self.attention.update_parmas(lr)
+        self.ffn.update_parmas(lr)
+        self.norm1.update_parmas(lr)
+        self.norm2.update_parmas(lr)
+
+
 class DecoderLayer:
     def __init__(self, heads, d_model, d_ff):
         self.attention = MultiHeadAttention(heads, d_model)
@@ -272,6 +279,7 @@ class Encoder:
         self.encoder_layers = [EncoderLayer(self.d_model, self.d_ff) for _ in range(num_layers)]
         self.pe = self.init_positional_encoding(max_seq_length)
         self.d_input_embeddings = np.zeros_like(self.input_embeddings)
+        self.cache = {}
 
     def init_positional_encoding(self, max_seq_length):
         position = np.arange(max_seq_length)[:, np.newaxis]
@@ -282,7 +290,9 @@ class Encoder:
         return pe
 
     def forward(self, x):
-        X_emb = self.embeddings[x]+self.pe[x]
+        self.cache['x'] = x
+        X_emb = self.input_embeddings[x] * np.sqrt(self.d_model)
+        X_emb += self.pe[x]
         for layer in range(self.num_layers):
             X_emb = self.encoder_layers[layer].forward(X_emb)
         return X_emb
@@ -293,6 +303,13 @@ class Encoder:
         for layer in reversed(range(self.num_layers)):
             d_x = self.encoder_layers[layer].backward(d_x)
 
-        dx_scaled = d_x/np.sqrt(self.d_model)
+        d_x_scaled = d_x/np.sqrt(self.d_model)
 
-        self.d_input_embeddings = np.matmul()
+        self.d_input_embeddings = np.matmul(self.cache['x'].transpose(0,2,1), d_x_scaled).sum(axis=0)
+        return None
+
+    def update_parmas(self, lr):
+        self.input_embeddings -= lr * self.d_input_embeddings
+
+        for layer in range(self.num_layers):
+            self.encoder_layers[layer].update_params(lr)
