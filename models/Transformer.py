@@ -303,6 +303,7 @@ class Encoder:
         for layer in reversed(range(self.num_layers)):
             d_x = self.encoder_layers[layer].backward(d_x)
 
+        # Positional Encoding은 역전파 과정이 단순히 들어온 값을 그대로 내보내 주는 방식
         d_x_scaled = d_x/np.sqrt(self.d_model)
 
         self.d_input_embeddings = np.matmul(self.cache['x'].transpose(0,2,1), d_x_scaled).sum(axis=0)
